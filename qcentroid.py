@@ -145,7 +145,9 @@ def _err(phase, exc, started, t0, dsha):
     zero_kpis = {k: 0 for k in ['realized_slippage_bps', 'fill_rate_pct', 'total_fees_bps', 'market_impact_bps',
                                  'price_discovery_score', 'venue_switches', 'implementation_shortfall_bps',
                                  'fill_time_p95_sec', 'latency_p95_ms', 'dark_pool_pct', 'maker_fill_pct',
-                                 'post_trade_drift_bps']}
+                                 'post_trade_drift_bps',
+                                 'vwap_deviation_bps', 'child_order_count',
+                                 'counterparty_concentration_hhi', 'price_improvement_bps']}
     return {'result': {**zero_kpis,
                        'benchmark': {'execution_cost': {'value': 0, 'unit': 'credits'}, 'time_elapsed': f'{wall:.1f}s', 'energy_consumption': 0.0},
                        'status': 'error', 'solution_status': 'error',

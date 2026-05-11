@@ -3,13 +3,16 @@ from typing import Any, Dict, List
 
 
 def compute_kpis(orders, fills, venue_catalogue, market_snapshot=None):
-    """Compute all 12 KPIs. `market_snapshot` is optional post-trade mid by (venue, asset)."""
+    """Compute all 16 KPIs (v3: adds vwap_deviation_bps, child_order_count,
+    counterparty_concentration_hhi, price_improvement_bps).
+    `market_snapshot` is optional post-trade mid by (venue, asset)."""
     if not fills:
         # zero-fill defensible defaults
         return {k: 0 for k in [
             'realized_slippage_bps', 'fill_rate_pct', 'total_fees_bps', 'market_impact_bps',
             'price_discovery_score', 'venue_switches', 'implementation_shortfall_bps',
-            'fill_time_p95_sec', 'latency_p95_ms', 'dark_pool_pct', 'maker_fill_pct', 'post_trade_drift_bps']}
+            'fill_time_p95_sec', 'latency_p95_ms', 'dark_pool_pct', 'maker_fill_pct', 'post_trade_drift_bps',
+            'vwap_deviation_bps', 'child_order_count', 'counterparty_concentration_hhi', 'price_improvement_bps']}
 
     total_notional = sum(f['quantity'] * f['exec_price'] for f in fills)
     arrival_by_order = {o['order_id']: float(o.get('arrival_price', 0)) for o in orders}
@@ -98,6 +101,45 @@ def compute_kpis(orders, fills, venue_catalogue, market_snapshot=None):
     else:
         post_trade_drift_bps = 0  # neutral when no post-trade tick data
 
+    # 13. VWAP deviation - sign-aware vs per-asset interval VWAP weighted by
+    # order quantity (arrival_price proxy when tick data is unavailable)
+    from collections import defaultdict
+    agg = defaultdict(lambda: [0.0, 0.0])
+    for o in orders:
+        a = o.get('asset') or o.get('asset_symbol')
+        ap = float(o.get('arrival_price', 0))
+        qty = float(o.get('quantity', 0))
+        agg[a][0] += ap * qty
+        agg[a][1] += qty
+    interval_vwap_by_asset = {a: (s / q if q else 0) for a, (s, q) in agg.items()}
+    vwap_num = 0.0
+    for f in fills:
+        sign = 1 if f['side'] == 'buy' else -1
+        ivwap = interval_vwap_by_asset.get(f.get('asset'), 0)
+        vwap_num += (f['exec_price'] - ivwap) * f['quantity'] * sign
+    vwap_deviation_bps = (vwap_num / total_notional) * 10_000 if total_notional else 0
+
+    # 14. Child order count = total execution_instructions (1 per fill)
+    child_order_count = int(len(fills))
+
+    # 15. Counterparty concentration HHI (Herfindahl-Hirschman Index)
+    if total_notional:
+        by_venue = {}
+        for f in fills:
+            by_venue[f['venue_id']] = by_venue.get(f['venue_id'], 0) + f['quantity'] * f['exec_price']
+        shares_pct = [(v / total_notional * 100) for v in by_venue.values()]
+        counterparty_concentration_hhi = sum(s * s for s in shares_pct)
+    else:
+        counterparty_concentration_hhi = 0
+
+    # 16. Price improvement - sign-aware (positive when exec inside the spread)
+    pi_num = 0.0
+    for f in fills:
+        sign = 1 if f['side'] == 'buy' else -1
+        mid = arrival_by_order.get(f['order_id'], 0)
+        pi_num += (mid - f['exec_price']) * f['quantity'] * sign
+    price_improvement_bps = (pi_num / total_notional) * 10_000 if total_notional else 0
+
     return {
         'realized_slippage_bps': round(realized_slippage_bps, 3),
         'fill_rate_pct': round(fill_rate_pct, 2),
@@ -111,4 +153,8 @@ def compute_kpis(orders, fills, venue_catalogue, market_snapshot=None):
         'dark_pool_pct': round(dark_pool_pct, 2),
         'maker_fill_pct': round(maker_fill_pct, 2),
         'post_trade_drift_bps': round(post_trade_drift_bps, 3),
+        'vwap_deviation_bps': round(vwap_deviation_bps, 3),
+        'child_order_count': int(child_order_count),
+        'counterparty_concentration_hhi': round(counterparty_concentration_hhi, 2),
+        'price_improvement_bps': round(price_improvement_bps, 3),
     }

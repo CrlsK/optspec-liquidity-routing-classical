@@ -1,5 +1,7 @@
-"""additional_output_generator.py v2 — 12 industry-grade visualisations for
+"""additional_output_generator.py v3 — 12 industry-grade visualisations for
 Use Case 853 (Optimized Liquidity Routing across Diversified Digital-Asset Markets).
+v3 expands the KPI scorecard / spider from 12 to 16 axes (adds VWAP deviation,
+child-order count, counterparty HHI, price improvement).
 
 Each function writes ONE self-contained file (HTML / SVG / CSV / JSON) with
 inline CSS, no external libs (no Chart.js, no D3, no fonts beyond system-ui).
@@ -131,37 +133,47 @@ def _write(path: str, content: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# v2 KPI normalisation (matches BENCHMARK_KPIS_v2.md)                         #
+# v3 KPI normalisation (matches BENCHMARK_KPIS_v3.md, 16 KPIs)                #
 # --------------------------------------------------------------------------- #
 KPI_SPEC: List[Tuple[str, str, bool]] = [
     # (field, short_label, higher_is_better)
-    ("realized_slippage_bps",        "Slippage",          False),
-    ("fill_rate_pct",                "Fill Rate",         True),
-    ("total_fees_bps",               "Fees",              False),
-    ("market_impact_bps",            "Mkt Impact",        False),
-    ("price_discovery_score",        "Price Disc.",       True),
-    ("venue_switches",               "Venue Switches",    False),
-    ("implementation_shortfall_bps", "Impl. Shortfall",   False),
-    ("fill_time_p95_sec",            "Fill Time p95",     False),
-    ("latency_p95_ms",               "Latency p95",       False),
-    ("dark_pool_pct",                "Dark Pool %",       False),
-    ("maker_fill_pct",               "Maker %",           True),
-    ("post_trade_drift_bps",         "Post-Trade Drift",  False),
+    ("realized_slippage_bps",          "Slippage",          False),
+    ("fill_rate_pct",                  "Fill Rate",         True),
+    ("total_fees_bps",                 "Fees",              False),
+    ("market_impact_bps",              "Mkt Impact",        False),
+    ("price_discovery_score",          "Price Disc.",       True),
+    ("venue_switches",                 "Venue Switches",    False),
+    ("implementation_shortfall_bps",   "Impl. Shortfall",   False),
+    ("fill_time_p95_sec",              "Fill Time p95",     False),
+    ("latency_p95_ms",                 "Latency p95",       False),
+    ("dark_pool_pct",                  "Dark Pool %",       False),
+    ("maker_fill_pct",                 "Maker %",           True),
+    ("post_trade_drift_bps",           "Post-Trade Drift",  False),
+    # v3 additions
+    ("vwap_deviation_bps",             "VWAP Dev",          False),
+    ("child_order_count",              "Child Orders",      False),
+    ("counterparty_concentration_hhi", "Venue HHI",         False),
+    ("price_improvement_bps",          "Price Improv.",     True),
 ]
 
 KPI_UNITS = {
-    "realized_slippage_bps":        "bps",
-    "fill_rate_pct":                "%",
-    "total_fees_bps":               "bps",
-    "market_impact_bps":            "bps",
-    "price_discovery_score":        "0-1",
-    "venue_switches":               "count",
-    "implementation_shortfall_bps": "bps",
-    "fill_time_p95_sec":            "s",
-    "latency_p95_ms":               "ms",
-    "dark_pool_pct":                "%",
-    "maker_fill_pct":               "%",
-    "post_trade_drift_bps":         "bps",
+    "realized_slippage_bps":          "bps",
+    "fill_rate_pct":                  "%",
+    "total_fees_bps":                 "bps",
+    "market_impact_bps":              "bps",
+    "price_discovery_score":          "0-1",
+    "venue_switches":                 "count",
+    "implementation_shortfall_bps":   "bps",
+    "fill_time_p95_sec":              "s",
+    "latency_p95_ms":                 "ms",
+    "dark_pool_pct":                  "%",
+    "maker_fill_pct":                 "%",
+    "post_trade_drift_bps":           "bps",
+    # v3 additions
+    "vwap_deviation_bps":             "bps",
+    "child_order_count":              "count",
+    "counterparty_concentration_hhi": "hhi",
+    "price_improvement_bps":          "bps",
 }
 
 
@@ -199,6 +211,15 @@ def _normalize_kpi(field: str, value: Any) -> float:
         return _clip(x, 0, 100) / 100.0
     if field == "post_trade_drift_bps":
         return 1.0 - _clip(abs(x), 0, 20) / 20.0
+    # v3 additions
+    if field == "vwap_deviation_bps":
+        return 1.0 - _clip(abs(x), 0, 50) / 50.0
+    if field == "child_order_count":
+        return 1.0 - _clip(x, 0, 200) / 200.0
+    if field == "counterparty_concentration_hhi":
+        return 1.0 - _clip(x, 0, 10000) / 10000.0
+    if field == "price_improvement_bps":
+        return _clip(x, 0, 50) / 50.0
     return 0.0
 
 
@@ -208,7 +229,7 @@ def _normalize_kpi(field: str, value: Any) -> float:
 def generate_additional_output(input_data: Dict[str, Any],
                                 result: Dict[str, Any],
                                 algorithm_name: str = "Solver") -> int:
-    """Generate all 12 visuals. Returns count of successful files."""
+    """Generate all 12 visuals (v3: 16-KPI scorecard + 16-axis spider). Returns count of successful files."""
     out_dir = os.environ.get("ADDITIONAL_OUTPUT_DIR", "./additional_output")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -239,7 +260,7 @@ def generate_additional_output(input_data: Dict[str, Any],
 
 
 # --------------------------------------------------------------------------- #
-# 01. Executive Summary — header card + 12-KPI dashboard grid                 #
+# 01. Executive Summary — header card + 16-KPI dashboard grid (v3)            #
 # --------------------------------------------------------------------------- #
 def gen_01_executive_summary(input_data: Dict[str, Any],
                               result: Dict[str, Any],
@@ -299,13 +320,13 @@ def gen_01_executive_summary(input_data: Dict[str, Any],
         f'</div></div>'
     )
 
-    body = header_card + f'<h2>12-KPI Execution Scorecard</h2><div class="grid g4">{"".join(cards)}</div>'
+    body = header_card + f'<h2>16-KPI Execution Scorecard</h2><div class="grid g4">{"".join(cards)}</div>'
     body += (
         f'<div class="card"><h3>Reading this dashboard</h3>'
         f'<div style="font-size:13px;color:{COL_INK_DIM}">'
         f'Each tile shows raw value, unit, a directional arrow vs a normalised quality threshold, '
         f'and a sparkline of the normalised score (longer = better). Spider chart in '
-        f'<b>02_kpi_spider.svg</b> overlays all 12 axes for cross-solver comparison.'
+        f'<b>02_kpi_spider.svg</b> overlays all 16 axes for cross-solver comparison.'
         f'</div></div>'
     )
 
@@ -415,7 +436,7 @@ def gen_02_kpi_spider(input_data: Dict[str, Any],
         f'width="720" height="700" font-family="{_FONT}">'
         f'<rect width="720" height="700" fill="{COL_BG}"/>'
         f'<text x="360" y="{title_y}" text-anchor="middle" font-size="18" '
-        f'font-weight="700" fill="{COL_INK}">KPI Spider — 12-axis Execution Quality</text>'
+        f'font-weight="700" fill="{COL_INK}">KPI Spider — 16-axis Execution Quality</text>'
         f'<text x="360" y="{title_y+20}" text-anchor="middle" font-size="12" '
         f'fill="{COL_INK_DIM}">{algorithm_name} · Total notional ${_f(total_notional,0)} · '
         f'higher polygon area = better routing</text>'
@@ -426,7 +447,7 @@ def gen_02_kpi_spider(input_data: Dict[str, Any],
         f'{"".join(raw_pts)}'
         f'{"".join(labels)}'
         f'<text x="360" y="680" text-anchor="middle" font-size="10" fill="{COL_INK_DIM}">'
-        f'Normalisation per BENCHMARK_KPIS_v2.md · 1.0 = best</text>'
+        f'Normalisation per BENCHMARK_KPIS_v3.md · 1.0 = best</text>'
         f'</svg>'
     )
     _write(os.path.join(output_dir, "02_kpi_spider.svg"), svg)
@@ -1388,7 +1409,7 @@ def gen_12_audit_full(input_data: Dict[str, Any],
         "objective_value": _safe(result, "objective_value"),
         "solution_status": _safe(result, "solution_status", _safe(result, "status")),
         "benchmark": _safe(result, "benchmark", {}),
-        "kpis_v2": {field: _safe(result, field) for field, _, _ in KPI_SPEC},
+        "kpis_v3": {field: _safe(result, field) for field, _, _ in KPI_SPEC},
         "kpis_normalised": {
             field: round(_normalize_kpi(field, _safe(result, field, 0) or 0), 4)
             for field, _, _ in KPI_SPEC

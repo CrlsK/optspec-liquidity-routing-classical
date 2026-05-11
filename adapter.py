@@ -7,6 +7,30 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 
+def _normalize_order(o):
+    """Map platform-format order keys to our internal canonical format."""
+    if not isinstance(o, dict):
+        return o
+    out = dict(o)  # copy
+    # asset_symbol -> asset
+    if 'asset_symbol' in out and 'asset' not in out:
+        out['asset'] = out['asset_symbol']
+    # limit_price -> arrival_price
+    if 'limit_price' in out and 'arrival_price' not in out:
+        out['arrival_price'] = float(out['limit_price'])
+    # time_in_force_seconds -> time_in_force_sec
+    if 'time_in_force_seconds' in out and 'time_in_force_sec' not in out:
+        out['time_in_force_sec'] = int(out['time_in_force_seconds'])
+    # defaults for fields our solver expects
+    out.setdefault('urgency', 'medium')
+    out.setdefault('max_slippage_bps', 25)
+    out.setdefault('min_fill_pct', 0.95)
+    # arrival_price is required by KPIs — fall back to anything plausible
+    if 'arrival_price' not in out:
+        out['arrival_price'] = float(out.get('mid', out.get('best_bid', out.get('best_ask', 100))))
+    return out
+
+
 def _venues_from_legacy(venues_list: List[dict], venue_latency_ms: dict) -> List[dict]:
     out = []
     for v in venues_list or []:
@@ -120,6 +144,7 @@ def to_internal(raw: Dict[str, Any]) -> Dict[str, Any]:
     if not orders:
         balances = (raw.get('inventory_and_limits') or {}).get('available_balances') or []
         orders = _synthesize_orders(books, balances, n=10)
+    orders = [_normalize_order(o) for o in orders]
 
     inv = raw.get('inventory_and_limits') or {}
     rc = raw.get('routing_constraints') or {}

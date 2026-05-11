@@ -2,6 +2,9 @@
   (A) our richer L2-book schema: orders[] + venue_catalogue[] + market_data.venues[venue][asset]
   (B) platform's example schema: inventory_and_limits + market_data.books[] + venues_list[]
       with no orders -> synthesize 10 reasonable test orders from balances + books.
+
+Both paths normalize venue records to carry `latency_ms` and `type` so the v2
+KPIs (latency_p95_ms, dark_pool_pct) have the metadata they need.
 """
 from __future__ import annotations
 from typing import Any, Dict, List
@@ -32,18 +35,28 @@ def _normalize_order(o):
 
 
 def _venues_from_legacy(venues_list: List[dict], venue_latency_ms: dict) -> List[dict]:
+    """Legacy path: map venues_list -> internal venue dicts. v2 KPIs require
+    `type` (from venue_type) and `latency_ms` (from the venue dict or the
+    venue_latency_ms map) to be present on every venue."""
     out = []
     for v in venues_list or []:
         fm = v.get('fee_model', {}) or {}
+        vid = v.get('venue_id') or v.get('id')
+        # explicit venue_type -> type fallback chain
+        vtype = v.get('venue_type') or v.get('type') or 'exchange'
+        # latency_ms: prefer venue dict, then top-level map, then 30ms default
+        vlat = v.get('latency_ms')
+        if vlat is None:
+            vlat = venue_latency_ms.get(vid, 30)
         out.append({
-            'id': v.get('venue_id') or v.get('id'),
-            'name': v.get('name', v.get('venue_id') or v.get('id')),
-            'type': v.get('venue_type', v.get('type', 'exchange')),
+            'id': vid,
+            'name': v.get('name', vid),
+            'type': vtype,
             'tier': v.get('tier', 'mid'),
             'fee_taker_bps': float(fm.get('taker_fee_bps', v.get('fee_taker_bps', 10))),
             'fee_maker_bps': float(fm.get('maker_fee_bps', v.get('fee_maker_bps', 0))),
             'rebate_bps': float(v.get('rebate_bps', 0)),
-            'latency_ms': float(v.get('latency_ms', venue_latency_ms.get(v.get('venue_id', ''), 30))),
+            'latency_ms': float(vlat),
             'quality_w': float(v.get('reliability_score', v.get('quality_w', 0.5))),
         })
     return out
@@ -116,11 +129,14 @@ def to_internal(raw: Dict[str, Any]) -> Dict[str, Any]:
         lat = raw.get('venue_latency_ms') or {}
         venues = [{
             'id': v.get('id'), 'name': v.get('name', v.get('id')),
-            'type': v.get('type', 'exchange'), 'tier': v.get('tier', 'mid'),
+            # `type` is required by v2 dark_pool_pct KPI; accept venue_type as alias
+            'type': v.get('type', v.get('venue_type', 'exchange')),
+            'tier': v.get('tier', 'mid'),
             'fee_taker_bps': float(v.get('fee_taker_bps', 10)),
             'fee_maker_bps': float(v.get('fee_maker_bps', 0)),
             'rebate_bps': float(v.get('rebate_bps', 0)),
-            'latency_ms': float(lat.get(v.get('id'), v.get('latency_ms', 30))),
+            # `latency_ms` is required by v2 latency_p95_ms KPI
+            'latency_ms': float(v.get('latency_ms', lat.get(v.get('id'), 30))),
             'quality_w': float(v.get('quality_w', 0.5)),
         } for v in venues_in]
     else:

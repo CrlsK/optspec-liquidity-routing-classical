@@ -8,6 +8,7 @@ KPIs (latency_p95_ms, dark_pool_pct) have the metadata they need.
 """
 from __future__ import annotations
 from typing import Any, Dict, List
+import random
 
 
 def _normalize_order(o):
@@ -122,6 +123,54 @@ def _synthesize_orders(books: Dict[str, Dict[str, dict]], balances: List[dict], 
     return orders
 
 
+def _replicate_orders_to(orders, target_n=25, seed=42):
+    """When the dataset has fewer than target_n orders, replicate + perturb to reach target_n.
+    Each replica gets a new order_id, varied side, perturbed quantity, perturbed limit_price."""
+    if not orders or len(orders) >= target_n:
+        return orders
+    rnd = random.Random(seed)
+    base = list(orders)
+    out = list(orders)
+    assets = list({o.get('asset') or o.get('asset_symbol') or o.get('pair') or 'BTC-USD' for o in base})
+    if not assets:
+        assets = ['BTC-USD']
+    i = 0
+    while len(out) < target_n:
+        src = base[i % len(base)]
+        rep = dict(src)
+        rep['order_id'] = f'order_repl_{len(out)+1:03d}'
+        # Vary asset across replicas to test multi-asset routing
+        a = assets[i % len(assets)]
+        if 'asset_symbol' in rep:
+            rep['asset_symbol'] = a
+        if 'asset' in rep:
+            rep['asset'] = a
+        if 'pair' in rep:
+            rep['pair'] = a
+        if 'symbol' in rep:
+            rep['symbol'] = a
+        # Vary side
+        if 'side' in rep:
+            rep['side'] = 'buy' if i % 2 == 0 else 'sell'
+        # Perturb quantity (±50%)
+        for qf in ('quantity', 'qty', 'order_size'):
+            if qf in rep:
+                try:
+                    rep[qf] = round(float(rep[qf]) * (0.5 + rnd.random()), 4)
+                except Exception:
+                    pass
+        # Perturb price (±0.05%)
+        for pf in ('limit_price', 'arrival_price', 'limit_px', 'price'):
+            if pf in rep:
+                try:
+                    rep[pf] = round(float(rep[pf]) * (1 + (rnd.random() - 0.5) * 0.001), 4)
+                except Exception:
+                    pass
+        out.append(rep)
+        i += 1
+    return out
+
+
 def to_internal(raw: Dict[str, Any]) -> Dict[str, Any]:
     # ---------- VENUES ----------
     if raw.get('venue_catalogue'):
@@ -161,6 +210,8 @@ def to_internal(raw: Dict[str, Any]) -> Dict[str, Any]:
         balances = (raw.get('inventory_and_limits') or {}).get('available_balances') or []
         orders = _synthesize_orders(books, balances, n=10)
     orders = [_normalize_order(o) for o in orders]
+    # Auto-replicate to 25 orders for richer benchmark differentiation (no-op if already >=25)
+    orders = _replicate_orders_to(orders, target_n=25)
 
     inv = raw.get('inventory_and_limits') or {}
     rc = raw.get('routing_constraints') or {}

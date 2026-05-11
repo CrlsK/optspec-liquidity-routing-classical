@@ -24,6 +24,14 @@ def solver(input_data, **kwargs):
     t0 = time.perf_counter()
     started = datetime.now(timezone.utc).isoformat()
     raw = (input_data or {}).get('data', input_data) or {}
+    if isinstance(raw, str):
+        try:
+            raw = _json.loads(raw)
+        except Exception:
+            try:
+                raw = ast.literal_eval(raw)
+            except Exception:
+                raw = {}
     dsha = hashlib.sha256(json.dumps(input_data, sort_keys=True, default=str).encode()).hexdigest()
     Path(os.environ.get('ADDITIONAL_OUTPUT_DIR', './additional_output')).mkdir(parents=True, exist_ok=True)
     try:

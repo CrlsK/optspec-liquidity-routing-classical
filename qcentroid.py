@@ -11,6 +11,24 @@ from additional_output_generator import generate_additional_output
 SOLVER_VERSION = '1.0.0-classical-greedy'
 ALGORITHM_NAME = 'GreedyRouter_BestPriceFirst_v1'
 
+
+def _enrich_fills(fills, venues):
+    """Annotate each fill with v2-KPI metadata: maker_or_taker, venue_type,
+    latency_ms, and a cumulative fill_ts_offset_ms (sum of prior latencies + own).
+    Greedy router defaults to taker — all hits are best-price."""
+    venue_by_id = {v['id']: v for v in venues}
+    cum_ms = 0.0
+    for f in fills:
+        v = venue_by_id.get(f['venue_id'], {})
+        lat = float(v.get('latency_ms', 30))
+        f.setdefault('maker_or_taker', 'taker')  # greedy = taker
+        f['venue_type'] = v.get('type', 'exchange')
+        f['latency_ms'] = lat
+        cum_ms += lat
+        f['fill_ts_offset_ms'] = cum_ms
+    return fills
+
+
 def solver(input_data, **kwargs):
     import ast, json as _json
     if isinstance(input_data, str):
@@ -39,9 +57,10 @@ def solver(input_data, **kwargs):
     except Exception as e: return _err('adapter', e, started, t0, dsha)
     try:
         fills = _greedy(internal)
+        fills = _enrich_fills(fills, internal['venues'])
     except Exception as e: return _err('solver', e, started, t0, dsha)
     wall = time.perf_counter() - t0
-    kpis = compute_kpis(internal['orders'], fills, internal['venues'])
+    kpis = compute_kpis(internal['orders'], fills, internal['venues'], market_snapshot=None)
     rp = _plan(fills)
     obj_val = (internal['obj_weights']['slippage'] * abs(kpis['realized_slippage_bps'])
                + internal['obj_weights']['fees'] * kpis['total_fees_bps']
@@ -123,8 +142,11 @@ def _plan(fills):
 
 def _err(phase, exc, started, t0, dsha):
     wall = time.perf_counter() - t0
-    return {'result': {'realized_slippage_bps': 0, 'fill_rate_pct': 0, 'total_fees_bps': 0, 'market_impact_bps': 0,
-                       'price_discovery_score': 0, 'venue_switches': 0,
+    zero_kpis = {k: 0 for k in ['realized_slippage_bps', 'fill_rate_pct', 'total_fees_bps', 'market_impact_bps',
+                                 'price_discovery_score', 'venue_switches', 'implementation_shortfall_bps',
+                                 'fill_time_p95_sec', 'latency_p95_ms', 'dark_pool_pct', 'maker_fill_pct',
+                                 'post_trade_drift_bps']}
+    return {'result': {**zero_kpis,
                        'benchmark': {'execution_cost': {'value': 0, 'unit': 'credits'}, 'time_elapsed': f'{wall:.1f}s', 'energy_consumption': 0.0},
                        'status': 'error', 'solution_status': 'error',
                        'routing_plan': [], 'execution_instructions': [], 'expected_kpis': {}, 'objective_value': None,
